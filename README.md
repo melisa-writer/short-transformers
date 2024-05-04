@@ -17,7 +17,7 @@ pip install short-transformers
 
 ## Quickstart:
 ```python
-from short-transformers import ShortTransformer
+from short_transformers import ShortTransformer
 
 # load from path/hf_hub
 model = ShortTransformer.from_pretrained(model_name)
@@ -41,9 +41,6 @@ short_mdoel.save_pretrained(output_path)
     - averaged angular distances of all tokens
 
 - based on layer linear replacement loss
-
-## Checkpoints:
-Collection of pruned and finetuned models:
 
 ## Citing
 

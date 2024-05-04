@@ -11,7 +11,6 @@ from short_transformers.dist import (
     angular_distance_last_token,
 )
 
-
 class ShortTransformer(PreTrainedModel):
 
     @classmethod
@@ -69,10 +68,10 @@ class ShortTransformer(PreTrainedModel):
         # return cls
 
     @staticmethod
-    def clear_memory(model):
+    def clear_memory(model) -> None:
         model.memory = {
             "examples_count": -1,
-            "result": np.zeros((cls.layer_count, cls.layer_count)),
+            "result": np.zeros((model.layer_count, model.layer_count)),
             "layers_outputs": {},
         }
 
@@ -81,7 +80,7 @@ class ShortTransformer(PreTrainedModel):
         np.savez(file_path, **memory)
 
     @staticmethod
-    def _layer_io(memory, layer_idx):
+    def _layer_io(memory, layer_idx:int):
         def decorator(f):
             @wraps(f)
             def wrap(*args, **kw):
@@ -126,8 +125,8 @@ class ShortTransformer(PreTrainedModel):
 
     @staticmethod
     def analyse_layers(
-        model, tokenizer, dataset, key="content", limit=1, max_length=1000
-    ):
+        model, tokenizer, dataset, key:str="content", limit:int=1, max_length:int=1000
+    ) -> None:
         model.model.eval()
         with torch.no_grad():
             count = 0
@@ -146,7 +145,7 @@ class ShortTransformer(PreTrainedModel):
                     break
 
     @staticmethod
-    def get_optimal_cut(model, num):
+    def get_optimal_cut(model, num: int) -> int:
         assert (
             num < model.layer_count and num > 0
         ), f"Expected `num` value between 1 and {model.layer_count -1}, got {num}."
@@ -154,14 +153,14 @@ class ShortTransformer(PreTrainedModel):
         return np.argmin(layer_result)
 
     @staticmethod
-    def cut(model, start_layer, n):
+    def cut(model, start_layer:int, n:int):
         new_layers = torch.nn.ModuleList()
 
         remove_layers = list(range(start_layer, start_layer + n))
         print(f"Removing layers: {remove_layers}")
 
         count = 0
-        for i in range(0, model.num_of_layers):
+        for i in range(0, model.layer_count):
             if i not in remove_layers:
                 count += 1
                 layer = model.model.layers[i]
@@ -171,13 +170,15 @@ class ShortTransformer(PreTrainedModel):
             else:
                 print(f"skipping layer: {i}")
 
-        copyOfModel = copy.deepcopy(model)
-        copyOfModel.model.layers = new_layers
+        model.model.layers = new_layers
 
-        copyOfModel.config.num_hidden_layers = model.num_of_layers - n
-        # copyOfModel.save_pretrained("short_mistral")
-        # model.model = copyOfModel
-        return ShortTransformer.from_model(copyOfModel)
+        model.config.num_hidden_layers = model.layer_count - n
+        model.config._name_or_path += f"-{model.config.num_hidden_layers}_layers"
+        
+        # @TODO clear memory
+        model.clear_memory()
+        
+        return model
 
     @staticmethod
     def remove_layers(
