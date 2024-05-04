@@ -3,17 +3,15 @@ import numpy as np
 import seaborn as sns
 
 
-def draw_diagram(input_file_path, output_file_path):
+def draw_diagram(input_file_path, output_file_path, title=None):
     plt.clf()
 
-    memory = np.load(input_file_path)
-
-    result = memory["result"]
-
+    result = np.load(input_file_path)["arr_0"]
     mask = np.zeros_like(result)
     mask[np.triu_indices_from(mask, k=1)] = True
     mask = np.flip(mask, axis=0)
 
+    # @TODO make row-wise normalization optional
     # rescale scores to 0-1 for each cut_layers value
     masked_result = np.ma.masked_array(result, mask)
     max_dist = np.ma.max(masked_result, axis=1)[:, np.newaxis]
@@ -25,5 +23,8 @@ def draw_diagram(input_file_path, output_file_path):
     ax.invert_yaxis()
     ax.set_xticklabels(ax.get_xticklabels(), ha="left")
     ax.set_yticklabels(ax.get_yticklabels(), va="bottom")
+
+    if title:
+        ax.set_title(title)
 
     plt.savefig(output_file_path)
