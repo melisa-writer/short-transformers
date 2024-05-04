@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "short-transformers"
+version = "0.1.0"
+description = "Cutting transformers layers"
+authors = ["Melisa Russak <melisa@russak.biz>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+matplotlib = "^3.8.4"
+tqdm = "^4.66.4"
+seaborn = "^0.13.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
