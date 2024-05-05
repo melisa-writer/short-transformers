@@ -1,4 +1,7 @@
 short_model/
+run_*
+*.npz
+*.png
 
 .idea
 .vscode

@@ -4,7 +4,7 @@
 - The repository reproduces and extends original methods by offering different layer pruning criteria.
 
 <p align="center">
-<img src="./docs/memory.png" align="center" width='300'/>
+<img src="./docs/Meta-Llama-3-8B.png" align="center" width='300'/>
 </p>
 
 [![pypi Version](https://img.shields.io/pypi/v/short-transformers.svg?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/short-transformers/)
@@ -86,7 +86,7 @@ draw_diagram("memory.npz", "memory.png")
 
 Example output:
 <p align="center">
-<img src="./docs/memory.png" align="center" width='300'/>
+<img src="./docs/Meta-Llama-3-8B.png" align="center" width='300'/>
 </p>
 
 2. Find optimal block size and start_layer:
