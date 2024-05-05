@@ -1,11 +1,12 @@
 # :scissors: Short Transformers
 
-- Pytorch implementation of layer pruning proposed in [The Unreasonable Ineffectiveness of the Deeper Layers](https://arxiv.org/pdf/2403.17887.pdf).
+- [Unofficial] Pytorch implementation of layer pruning proposed in [The Unreasonable Ineffectiveness of the Deeper Layers](https://arxiv.org/pdf/2403.17887.pdf).
 - The repository reproduces and extends original methods by offering different layer pruning criteria.
 
 <p align="center">
-<img src="./docs/Meta-Llama-3-8B.png" align="center" width='300'/>
+<img src="./docs/merged.png" align="center" alt="Normalized angular distance from initial layer l (x-axis) with block size n (y-axis)." height='250'/>
 </p>
+
 
 [![pypi Version](https://img.shields.io/pypi/v/short-transformers.svg?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/short-transformers/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -20,14 +21,18 @@ Required additional dependencies: `transformers`, `datasets`.
 ## Quickstart:
 ```python
 from short_transformers import ShortTransformer
+from datasets import load_dataset
 
 # load from path/hf_hub
 model = ShortTransformer.from_pretrained(model_name)
 
 # or use hf model
-model = ShortTransformer.from_model(hf_model)
+# model = ShortTransformer.from_model(hf_model)
 
-# remove n layers, use hf dataset to find the optimal cut
+# load hf dataset
+dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
+
+# remove 5 layers, use the dataset to find the least important layers to remove
 short_model = model.remove_layers(block_size=5, dataset=dataset, limit=1000)
 
 # continue training to heal after the cut
@@ -35,19 +40,6 @@ short_model = model.remove_layers(block_size=5, dataset=dataset, limit=1000)
 
 # save as hf model
 short_mdoel.save_pretrained(output_path)
-```
-Example log output:
-```sh
-[2024-05-04 18:39:03] [short-transformers] Running inference on 1000 samples.
-1000it [00:06, ?it/s]
-[2024-05-04 18:39:09] [short-transformers] Inference results saved to `model.memory`.
-[2024-05-04 18:39:09] [short-transformers] Choosing optimal 5-layers block to prune.
-[2024-05-04 18:39:09] [short-transformers] Best 5-layers block to prune starts at layer: 23.
-[2024-05-04 18:39:09] [short-transformers] Removing layers: [23, 24, 25, 26, 27]
-[2024-05-04 18:39:09] [short-transformers] Changing model config to reflect changes:
-        config.num_hidden_layers: 32 -> 27
-        config._name_or_path: meta-llama/Meta-Llama-3-8B -> meta-llama/Meta-Llama-3-8B-27L
-[2024-05-04 18:39:09] [short-transformers] Cleaning `model.memory`.
 ```
 
 Both `short_model` and the saved model are fully compatible with transformers. See `examples/basic.py` for a complete working example.
@@ -60,8 +52,11 @@ Pruning can composed step-by-step and customized:
 ```python
 from datasets import load_dataset
 from short_transformers import ShortTransformer
-from short_transformers.graph import draw_diagram
-
+from short_transformers.utils import (
+    draw_diagram,
+    get_scored_blocks,
+    get_best_pruning_start,
+)
 # load from path/hf_hub
 model_name = "meta-llama/Meta-Llama-3-8B"
 
@@ -69,19 +64,20 @@ model = ShortTransformer.from_pretrained(model_name, device_map="auto")
 
 dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
 
-# run inderence on a subset of the datsets
-model.analyse_layers(
+# calculate distances between inputs/outputs from/to model layers
+# results in a triangular numpy array of shape (layer_count, layer_count)
+# results[x, y] - averaged distances for block of size x starting at layer y
+results = model.analyse_layers(
     dataset=dataset,
     key="text",
     limit=100,
     max_length=1000,
 )
 
-# after this step, results will be saved to model.memory, which can be saved
-model.save_memory("memory.npz")
-
-# and visualized as seaborh graph (see examples in the README.md)
-draw_diagram("memory.npz", "memory.png")
+# draw results
+# diagrams style matches the style of original article
+# "The Unreasonable Ineffectiveness of the Deeper Layers"
+draw_diagram(results, "results.png", title="Meta-Llama-3-8B")
 ```
 
 Example output:
@@ -89,15 +85,15 @@ Example output:
 <img src="./docs/Meta-Llama-3-8B.png" align="center" width='300'/>
 </p>
 
-2. Find optimal block size and start_layer:
+2. Find optimal `block_size` and `start_layer`:
 ```python
-# finding optimial block of size 'num' to prune
-start_layer = model.get_optimal_cut(block_size=5)
+# find optimial block of size 'block_size' to prune
+start_layer = get_best_pruning_start(results, block_size=5)
 
-# evaluating all possibe block sizes to prune,
+# evaluate all possibe block sizes to prune,
 # for each block returns score 0-1
 # which is averaged over samples distance between input and output to/from a block
-block_score = model.get_block_score_stats(return_md=True, threshold=0.3)
+block_score = get_scored_blocks(results, return_md=True, threshold=0.3)
 ```
 
 Example output:
@@ -116,15 +112,11 @@ Example output:
 
 3. Pruning layers:
 ```python
-# pruning 5-layers block
-# this will also clean the `model.memory``
-model.cut(start_layer=start_layer, block_size=5)
-
-# or clean the model memory manually
-model.clean_memory()
+# prune 5-layers block
+model.prune(start_layer=start_layer, block_size=5)
 
 # save the pruned model
-model.save_pretrained("model_path")
+model.save_pretrained("model_output_dir")
 ```
 
 See `example/prune_in_steps.py` for a complete working example.

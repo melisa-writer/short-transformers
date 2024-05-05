@@ -3,26 +3,28 @@ import numpy as np
 import seaborn as sns
 
 
-def draw_diagram(input_file_path, output_file_path, title=None):
+def draw_diagram(results, output_file_path, title=None):
     plt.clf()
 
-    result = np.load(input_file_path)["arr_0"]
-    mask = np.zeros_like(result)
+    mask = np.zeros_like(results)
     mask[np.triu_indices_from(mask, k=1)] = True
     mask = np.flip(mask, axis=0)
 
     # @TODO make row-wise normalization optional
     # rescale scores to 0-1 for each cut_layers value
-    masked_result = np.ma.masked_array(result, mask)
-    max_dist = np.ma.max(masked_result, axis=1)[:, np.newaxis]
-    min_dist = np.ma.min(masked_result, axis=1)[:, np.newaxis]
+    masked_results = np.ma.masked_array(results, mask)
+    max_dist = np.ma.max(masked_results, axis=1)[:, np.newaxis]
+    min_dist = np.ma.min(masked_results, axis=1)[:, np.newaxis]
 
-    result = (result - min_dist) / (max_dist - min_dist)
+    results = (results - min_dist) / (max_dist - min_dist)
 
-    ax = sns.heatmap(result, linewidth=0.5, mask=mask, cmap="viridis_r")
+    ax = sns.heatmap(results, linewidth=0.5, mask=mask, cmap="viridis_r")
     ax.invert_yaxis()
     ax.set_xticklabels(ax.get_xticklabels(), ha="left")
     ax.set_yticklabels(ax.get_yticklabels(), va="bottom")
+
+    plt.xlabel("Layer number, l")
+    plt.ylabel("Block size, n")
 
     if title:
         ax.set_title(title)
