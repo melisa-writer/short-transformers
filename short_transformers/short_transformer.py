@@ -5,14 +5,8 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
-from short_transformers.dist import (
-    angular_distance_all_tokens,
-    angular_distance_last_token,
-)
-from short_transformers.utils import (
-    get_best_pruning_start,
-    get_logger
-)
+from short_transformers.dist import angular_distance_last_token
+from short_transformers.utils import get_best_pruning_start, get_logger
 
 logger = get_logger("short-transformers", debug=True)
 
@@ -25,12 +19,11 @@ class Memory:
 
 
 class ShortTransformer(PreTrainedModel):
-    default_io_distance = angular_distance_last_token
-
     @classmethod
-    def from_model(cls, model):
+    def from_model(cls, model, distance=angular_distance_last_token):
         cls = model
         cls.layer_count = len(cls.model.layers)
+        cls.distance = distance
 
         # add memory for storing intermediate layers outputs
         cls.memory = Memory(cls.layer_count)
@@ -41,12 +34,11 @@ class ShortTransformer(PreTrainedModel):
         cls.analyse_layers = partial(ShortTransformer.analyse_layers, cls)
         cls.prune = partial(ShortTransformer.prune, cls)
         cls.remove_layers = partial(ShortTransformer.remove_layers, cls)
+        cls.set_metric = partial(ShortTransformer.set_metric, cls)
 
-        # add decorators to each forward in layers
+        # # add decorators to each forward in layers
         for layer_idx, layer in enumerate(cls.model.layers):
-            layer.forward = ShortTransformer._layer_io(
-                cls.memory, layer_idx, ShortTransformer.default_io_distance
-            )(layer.forward)
+            layer.forward = ShortTransformer._layer_io(cls, layer_idx)(layer.forward)
 
         return cls
 
@@ -61,22 +53,21 @@ class ShortTransformer(PreTrainedModel):
         model.memory = Memory(model.layer_count)
 
     @staticmethod
-    def _layer_io(memory, layer_idx: int, io_distance):
+    def _layer_io(model, layer_idx: int):
         def decorator(f):
             @wraps(f)
             def wrap(*args, **kw):
-                nonlocal memory
+                nonlocal model
                 nonlocal layer_idx
-                nonlocal io_distance
 
                 input_hidden_states = args[0]
 
                 if layer_idx == 0:
                     # clear the memory of previous example outputs and remmeber the input
-                    memory.layers_outputs = {
+                    model.memory.layers_outputs = {
                         -1: torch.clone(input_hidden_states).to("cpu")
                     }
-                    memory.examples_count += 1
+                    model.memory.examples_count += 1
 
                 # pass all arguments to the function
                 result = f(*args, **kw)
@@ -85,28 +76,30 @@ class ShortTransformer(PreTrainedModel):
                 output_hidden_states = torch.clone(result[0]).to("cpu")
 
                 # calculate scores from -1 to this layer:
-                for k, v in memory.layers_outputs.items():
-                    dist = io_distance(v, output_hidden_states)
+                for k, v in model.memory.layers_outputs.items():
+                    dist = model.distance(v, output_hidden_states)
 
                     cut_layers = layer_idx - k - 1
 
-                    memory.result[cut_layers, k + 1] = (
-                        memory.result[cut_layers, k + 1] * memory.examples_count + dist
-                    ) / (memory.examples_count + 1)
+                    model.memory.result[cut_layers, k + 1] = (
+                        model.memory.result[cut_layers, k + 1]
+                        * model.memory.examples_count
+                        + dist
+                    ) / (model.memory.examples_count + 1)
 
                 # remember the state
-                memory.layers_outputs[layer_idx] = torch.clone(output_hidden_states).to(
-                    "cpu"
-                )
+                model.memory.layers_outputs[layer_idx] = torch.clone(
+                    output_hidden_states
+                ).to("cpu")
                 return result
 
             return wrap
 
         return decorator
 
-    # @TODO
-    # @staticmethod
-    # def set_pruning_criterion(model, criterion_callable):
+    @staticmethod
+    def set_metric(model, criterion_callable):
+        model.distance = criterion_callable
 
     @staticmethod
     def analyse_layers(
@@ -194,7 +187,6 @@ class ShortTransformer(PreTrainedModel):
         batch_size=1,
         max_length=1000,
         return_outputs=False,
-        distance=angular_distance_last_token,
     ):
         assert batch_size == 1, "batch_size > 1 is not supported yet."
         result = model.analyse_layers(

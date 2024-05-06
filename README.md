@@ -111,6 +111,7 @@ Example output:
 
 
 3. Pruning layers:
+
 ```python
 # prune 5-layers block
 model.prune(start_layer=start_layer, block_size=5)
@@ -121,6 +122,32 @@ model.save_pretrained("model_output_dir")
 
 See `example/prune_in_steps.py` for a complete working example.
 
+4. Changing the pruning method:
+
+Default pruning method is based on angular distance of the last token.
+It is possible to overwrite the distance by using `model.set_metric(some_callable)` before `model.analyse_layers()`.
+
+```python
+# ...
+from short_transformers.dist import get_angular_distance_ith_token
+
+model_name = "meta-llama/Meta-Llama-3-8B"
+model = ShortTransformer.from_pretrained(model_name, device_map="auto")
+
+# choose metric
+# calculate distances based on the angular distance of the i=0 token
+model.set_metric(get_angular_distance_ith_token(i=0))
+
+# load dataset ...
+
+results = model.analyse_layers(
+    dataset=dataset,
+    tokenizer=tokenizer,
+    key="text",
+    limit=1,
+    max_length=1000,
+)
+```
 
 ## Supported pruning methods:
 - based on layer input/output distances:
@@ -129,7 +156,7 @@ See `example/prune_in_steps.py` for a complete working example.
 
 - todo: based on layer linear replacement trining loss
 
-## Citing
+## Citing:
 
 If you use Short Transformers in your research, please cite with the following BibText
 
