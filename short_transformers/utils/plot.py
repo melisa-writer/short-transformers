@@ -3,7 +3,7 @@ import numpy as np
 import seaborn as sns
 
 
-def draw_diagram(results, output_file_path, title=None):
+def draw_diagram(results, output_file_path, title=None, normalized=True):
     plt.clf()
 
     mask = np.zeros_like(results)
@@ -12,11 +12,13 @@ def draw_diagram(results, output_file_path, title=None):
 
     # @TODO make row-wise normalization optional
     # rescale scores to 0-1 for each cut_layers value
-    masked_results = np.ma.masked_array(results, mask)
-    max_dist = np.ma.max(masked_results, axis=1)[:, np.newaxis]
-    min_dist = np.ma.min(masked_results, axis=1)[:, np.newaxis]
+    
+    if normalized:
+        masked_results = np.ma.masked_array(results, mask)
+        max_dist = np.ma.max(masked_results, axis=1)[:, np.newaxis]
+        min_dist = np.ma.min(masked_results, axis=1)[:, np.newaxis]
 
-    results = (results - min_dist) / (max_dist - min_dist)
+        results = (results - min_dist) / (max_dist - min_dist)
 
     ax = sns.heatmap(results, linewidth=0.5, mask=mask, cmap="viridis_r")
     ax.invert_yaxis()

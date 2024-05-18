@@ -102,6 +102,10 @@ class ShortTransformer(PreTrainedModel):
         model.distance = criterion_callable
 
     @staticmethod
+    def group_batch(batch):
+        return {k: [v] for k, v in batch.items()}
+
+    @staticmethod
     def analyse_layers(
         model,
         dataset,
@@ -109,6 +113,7 @@ class ShortTransformer(PreTrainedModel):
         key: str = "content",
         limit: int = 1,
         max_length: int = 1000,
+        batch_size: int = 1
     ) -> None:
         if tokenizer is None:
             logger.debug(
@@ -125,6 +130,10 @@ class ShortTransformer(PreTrainedModel):
         logger.debug(f"Running inference on {limit} samples.")
 
         model.model.eval()
+
+        if batch_size > 1:
+            dataset = dataset.map(ShortTransformer.group_batch, batched=True, batch_size=batch_size)
+
         with torch.no_grad():
             count = 0
             for d in tqdm(dataset):
@@ -132,12 +141,12 @@ class ShortTransformer(PreTrainedModel):
                 inputs = tokenizer(
                     content,
                     return_tensors="pt",
-                    padding=False,
+                    padding=True if batch_size>1 else False,
                     truncation=True,
                     max_length=max_length,
                 ).to(model.device)
                 model(**inputs)
-                count += 1
+                count += batch_size
                 if count >= limit:
                     break
         result = model.memory.result
