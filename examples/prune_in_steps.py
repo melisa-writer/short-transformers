@@ -33,6 +33,7 @@ dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
 results = model.analyse_layers(
     dataset=dataset,
     tokenizer=tokenizer,
+    use_chat_template=False,
     key="text",
     limit=100,
     max_length=1000,

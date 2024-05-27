@@ -3,7 +3,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # load from path/hf_hub
-model_name = "meta-llama/Meta-Llama-3-8B"
+model_name = "microsoft/Phi-3-mini-4k-instruct"
 
 model = ShortTransformer.from_pretrained(model_name, device_map="auto")
 tokenizer = AutoTokenizer.from_pretrained(model_name)

@@ -5,6 +5,7 @@ import numpy as np
 
 # The Unreasonable Ineffectiveness of the Deeper Layers
 # https://arxiv.org/abs/2403.17887
+# @TODO: make it work with batches
 def get_angular_distance_ith_token(i: int) -> float:
     def angular_distance_ith_token(input, output) -> float:
         cos_sim = torch.nn.CosineSimilarity(dim=-1, eps=1e-6)
@@ -38,6 +39,8 @@ def angular_distance_all_tokens(input, output):
     dist = dist.mean().item()
     return dist
 
+# Similar to: Your Transformer is Secretly Linear
+# https://arxiv.org/pdf/2405.12250
 def get_linear_approximation_ith_token(i: int) -> float:
     def linear_approximation_ith_token(input, output) -> float:
         try:
@@ -58,13 +61,13 @@ def get_linear_approximation_ith_token(i: int) -> float:
 
     return linear_approximation_ith_token
 
-def linear_approximation_all_tokens(input, output):
-    A_est = np.linalg.pinv(input.T).dot(output.T).T
-    output_est = A_est.dot(input)
-    diff_squared = (output_est - output)**2
-    diff_summ = diff_squared.sum()
-    diff = diff_summ / diff_summ.size
-    return diff
+# def linear_approximation_all_tokens(input, output):
+#     A_est = np.linalg.pinv(input.T).dot(output.T).T
+#     output_est = A_est.dot(input)
+#     diff_squared = (output_est - output)**2
+#     diff_summ = diff_squared.sum()
+#     diff = diff_summ / diff_summ.size
+#     return diff
 
 
 def get_euclidian_dist_ith_token(i: int) -> float:

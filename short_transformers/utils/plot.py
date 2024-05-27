@@ -1,7 +1,7 @@
 import matplotlib.pylab as plt
 import numpy as np
 import seaborn as sns
-
+import matplotlib
 
 def draw_diagram(results, output_file_path, title=None, normalized=True):
     plt.clf()
@@ -32,3 +32,20 @@ def draw_diagram(results, output_file_path, title=None, normalized=True):
         ax.set_title(title)
 
     plt.savefig(output_file_path)
+
+
+def draw_layers_heatmap(results, metric_name, title, output_path, block_size=0, cmap=matplotlib.cm.viridis_r):
+
+    # @TODO make row-wise normalization?
+    if block_size:
+        data = results[0, :-block_size]
+    else:
+        data = results[0, :]
+    data = np.asarray(data).reshape(data.shape[0],1)
+
+    fig = plt.figure(figsize = (5,5))
+    ax = sns.heatmap(data, annot=False, cmap=cmap)
+
+    ax.set_xlabel(metric_name)
+    ax.set_title(title)
+    plt.savefig(output_path)

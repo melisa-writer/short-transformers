@@ -1,10 +1,16 @@
 # :scissors: Short Transformers
 
-- [Unofficial] Pytorch implementation of layer pruning proposed in [The Unreasonable Ineffectiveness of the Deeper Layers](https://arxiv.org/pdf/2403.17887.pdf).
-- The repository reproduces and extends original methods by offering different layer pruning criteria.
+- [Unofficial] Pytorch implementation of layer pruning base on layer importance defined proposed in papers:
+    - [ShortGPT: Layers in Large Language Models are More Redundant Than You Expect](https://arxiv.org/pdf/2403.03853)
+    - [Weight subcloning: direct initialization of transformers using larger pretrained ones](https://arxiv.org/abs/2312.09299)
+    - [The Unreasonable Ineffectiveness of the Deeper Layers](https://arxiv.org/abs/2403.17887)
+    - [Your Transformer is Secretly Linear](https://arxiv.org/pdf/2405.12250)
+
+- The repository reproduces and extends original methods by offering more layer pruning criteria.
+- See example outputs at the end of this README :rocket: (Can you guess a recipe for `01-ai/Yi-1.5-9B-Chat` frankenmerge?)
 
 <p align="center">
-<img src="./docs/merged.png" align="center" alt="Normalized angular distance from initial layer l (x-axis) with block size n (y-axis)." height='250'/>
+<img src="./docs/images/merged.png" align="center" alt="Normalized angular distance from initial layer l (x-axis) with block size n (y-axis)." height='250'/>
 </p>
 
 
@@ -16,7 +22,7 @@
 pip install short-transformers
 ```
 
-Required additional dependencies: `transformers`, `datasets`.
+Required additional dependencies: `torch`, `transformers`, `datasets`, `accelerate`.
 
 ## Quickstart:
 ```python
@@ -69,6 +75,8 @@ dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
 # results[x, y] - averaged distances for block of size x starting at layer y
 results = model.analyse_layers(
     dataset=dataset,
+    tokenizer=tokenizer,
+    use_chat_template=False,
     key="text",
     limit=100,
     max_length=1000,
@@ -77,12 +85,12 @@ results = model.analyse_layers(
 # draw results
 # diagrams style matches the style of original article
 # "The Unreasonable Ineffectiveness of the Deeper Layers"
-draw_diagram(results, "results.png", title="Meta-Llama-3-8B")
+draw_diagram(results, "results.png", title="Meta-Llama-3-8B", normalized=True)
 ```
 
 Example output:
 <p align="center">
-<img src="./docs/Meta-Llama-3-8B.png" align="center" width='300'/>
+<img src="./docs/images/Meta-Llama-3-8B.png" align="center" width='300'/>
 </p>
 
 2. Find optimal `block_size` and `start_layer`:
@@ -149,12 +157,111 @@ results = model.analyse_layers(
 )
 ```
 
-## Supported pruning methods:
-- based on layer input/output distances:
-    - angular distance of the last token (original)
-    - averaged angular distances of all tokens
+## Supported metric for layer importance calculation:
+- bi score (see: [ShortGPT: Layers in Large Language Models are More Redundant Than You Expect](https://arxiv.org/pdf/2403.03853))
+- relative magnitude (see: [Weight subcloning: direct initialization of transformers using larger pretrained ones](https://arxiv.org/abs/2312.09299))
+- angular distance of the i-th token (see: [The Unreasonable Ineffectiveness of the Deeper Layers](https://arxiv.org/abs/2403.17887))
+- averaged angular distances of all tokens
+- linear approximation of the i-th token (see: [Your Transformer is Secretly Linear](https://arxiv.org/pdf/2405.12250))
+- euclidian dist of the i-th token
+   
+## Example outputs:
 
-- todo: based on layer linear replacement trining loss
+### Meta-Llama-3-8B-Instruct
+#### Layerwise distances:
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_merged.png" align="center" alt="" height="300" /></p>
+
+#### Blockwise distances:
+
+#### Euclidian Dist Last Token 
+
+Figure 1: Euclidian Dist Last Token. Figure 2: Euclidian Dist Last Token  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_get_euclidian_dist_last__merged.png" align="center" alt="" height="300" /></p>
+
+#### Relative Magnitude 
+
+Figure 1: Relative Magnitude. Figure 2: Relative Magnitude  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_relative_magnitude__merged.png" align="center" alt="" height="300" /></p>
+
+#### Bi Score 
+
+Figure 1: Bi Score. Figure 2: Bi Score  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_bi_score__merged.png" align="center" alt="" height="300" /></p>
+
+#### Linear Approximation Last Token 
+
+Figure 1: Linear Approximation Last Token. Figure 2: Linear Approximation Last Token  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_get_linear_approximation_last__merged.png" align="center" alt="" height="300" /></p>
+
+#### Angular Distance All Tokens 
+
+Figure 1: Angular Distance All Tokens. Figure 2: Angular Distance All Tokens  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_angular_distance_all_tokens__merged.png" align="center" alt="" height="300" /></p>
+
+#### Angular Distance Last Token 
+
+Figure 1: Angular Distance Last Token. Figure 2: Angular Distance Last Token  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Meta-Llama-3-8B-Instruct/Meta-Llama-3-8B-Instruct_angular_distance_last__merged.png" align="center" alt="" height="300" /></p>
+
+
+### Yi-1.5-9B-Chat-16K
+
+#### Layerwise distances:
+
+
+<p align="center"><img src="./docs/images/report_Yi-1.5-9B-Chat-16K/Yi-1.5-9B-Chat-16K_merged.png" align="center" alt="" height="300" /></p>
+
+#### Blockwise distances:
+
+#### Euclidian Dist Last Token 
+
+Figure 1: Euclidian Dist Last Token. Figure 2: Euclidian Dist Last Token  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Yi-1.5-9B-Chat-16K/Yi-1.5-9B-Chat-16K_get_euclidian_dist_last__merged.png" align="center" alt="" height="300" /></p>
+
+#### Relative Magnitude 
+
+Figure 1: Relative Magnitude. Figure 2: Relative Magnitude  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Yi-1.5-9B-Chat-16K/Yi-1.5-9B-Chat-16K_relative_magnitude__merged.png" align="center" alt="" height="300" /></p>
+
+#### Bi Score 
+
+Figure 1: Bi Score. Figure 2: Bi Score  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Yi-1.5-9B-Chat-16K/Yi-1.5-9B-Chat-16K_bi_score__merged.png" align="center" alt="" height="300" /></p>
+
+#### Linear Approximation Last Token 
+
+Figure 1: Linear Approximation Last Token. Figure 2: Linear Approximation Last Token  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Yi-1.5-9B-Chat-16K/Yi-1.5-9B-Chat-16K_get_linear_approximation_last__merged.png" align="center" alt="" height="300" /></p>
+
+#### Angular Distance Last Token 
+
+Figure 1: Angular Distance Last Token. Figure 2: Angular Distance Last Token  Normalised
+
+
+<p align="center"><img src="./docs/images/report_Yi-1.5-9B-Chat-16K/Yi-1.5-9B-Chat-16K_angular_distance_last__merged.png" align="center" alt="" height="300" /></p>
+
+
 
 ## Citing:
 
@@ -176,5 +283,35 @@ If you use Short Transformers in your research, please cite with the following B
       eprint={2403.17887},
       archivePrefix={arXiv},
       primaryClass={cs.CL}
+}
+```
+```bibtext
+@misc{razzhigaev2024transformer,
+      title={Your Transformer is Secretly Linear}, 
+      author={Anton Razzhigaev and Matvey Mikhalchuk and Elizaveta Goncharova and Nikolai Gerasimenko and Ivan Oseledets and Denis Dimitrov and Andrey Kuznetsov},
+      year={2024},
+      eprint={2405.12250},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+```
+```bibtext
+@misc{men2024shortgpt,
+      title={ShortGPT: Layers in Large Language Models are More Redundant Than You Expect}, 
+      author={Xin Men and Mingyu Xu and Qingyu Zhang and Bingning Wang and Hongyu Lin and Yaojie Lu and Xianpei Han and Weipeng Chen},
+      year={2024},
+      eprint={2403.03853},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```
+```bibtext
+@misc{samragh2023weight,
+      title={Weight subcloning: direct initialization of transformers using larger pretrained ones}, 
+      author={Mohammad Samragh and Mehrdad Farajtabar and Sachin Mehta and Raviteja Vemulapalli and Fartash Faghri and Devang Naik and Oncel Tuzel and Mohammad Rastegari},
+      year={2023},
+      eprint={2312.09299},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
 }
 ```

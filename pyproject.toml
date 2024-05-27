@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "short-transformers"
-version = "0.4.0"
+version = "1.0.0"
 description = "Cutting transformers layers"
 authors = ["Melisa Russak <melisa@russak.biz>"]
 license = "MIT"

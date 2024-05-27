@@ -110,6 +110,7 @@ class ShortTransformer(PreTrainedModel):
         model,
         dataset,
         tokenizer=None,
+        use_chat_template=False,
         key: str = "content",
         limit: int = 1,
         max_length: int = 1000,
@@ -138,13 +139,16 @@ class ShortTransformer(PreTrainedModel):
             count = 0
             for d in tqdm(dataset):
                 content = d[key]
-                inputs = tokenizer(
-                    content,
-                    return_tensors="pt",
-                    padding=True if batch_size>1 else False,
-                    truncation=True,
-                    max_length=max_length,
-                ).to(model.device)
+                if use_chat_template:
+                    inputs = tokenizer.apply_chat_template(content, tokenize=True, add_generation_prompt=False)
+                else:
+                    inputs = tokenizer(
+                        content,
+                        return_tensors="pt",
+                        padding=True if batch_size>1 else False,
+                        truncation=True,
+                        max_length=max_length,
+                    ).to(model.device)
                 model(**inputs)
                 count += batch_size
                 if count >= limit:
