@@ -1,6 +1,6 @@
 # :scissors: Short Transformers
 
-- [Unofficial] Pytorch implementation of layer pruning based on layer importance defined proposed in papers:
+- [Unofficial] Pytorch implementation of layer pruning based on layer importance defined in papers:
     - [ShortGPT: Layers in Large Language Models are More Redundant Than You Expect](https://arxiv.org/pdf/2403.03853)
     - [Weight subcloning: direct initialization of transformers using larger pretrained ones](https://arxiv.org/abs/2312.09299)
     - [The Unreasonable Ineffectiveness of the Deeper Layers](https://arxiv.org/abs/2403.17887)
