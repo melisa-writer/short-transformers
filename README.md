@@ -45,7 +45,7 @@ short_model = model.remove_layers(block_size=5, dataset=dataset, limit=1000)
 # ...
 
 # save as hf model
-short_mdoel.save_pretrained(output_path)
+short_model.save_pretrained(output_path)
 ```
 
 Both `short_model` and the saved model are fully compatible with transformers. See `examples/basic.py` for a complete working example.
