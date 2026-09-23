@@ -28,7 +28,7 @@ model.set_metric(get_angular_distance_ith_token(i=0))
 dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
 
 # calculate distances between inputs/outputs from/to model layers
-# results in a triangular numpy array of shape (layer_count, layer_count)
+# results in a triangular numpy array of shape (layer_count + 1, layer_count)
 # results[x, y] - averaged distances for block of size x starting at layer y
 results = model.analyse_layers(
     dataset=dataset,

@@ -14,7 +14,8 @@ logger = get_logger("short-transformers", debug=True)
 class Memory:
     def __init__(self, layer_count: int):
         self.examples_count: int = -1
-        self.result = np.zeros((layer_count, layer_count))
+        # result[n, l]: averaged distance for removing the n-layers block starting at layer l
+        self.result = np.zeros((layer_count + 1, layer_count))
         self.layers_outputs: dict = {}
 
 
@@ -36,9 +37,7 @@ class ShortTransformer(PreTrainedModel):
         cls.remove_layers = partial(ShortTransformer.remove_layers, cls)
         cls.set_metric = partial(ShortTransformer.set_metric, cls)
 
-        # # add decorators to each forward in layers
-        for layer_idx, layer in enumerate(cls.model.layers):
-            layer.forward = ShortTransformer._layer_io(cls, layer_idx)(layer.forward)
+        ShortTransformer._wrap_layers(cls)
 
         return cls
 
@@ -51,6 +50,13 @@ class ShortTransformer(PreTrainedModel):
     @staticmethod
     def clear_memory(model) -> None:
         model.memory = Memory(model.layer_count)
+
+    @staticmethod
+    def _wrap_layers(model) -> None:
+        # (re)wrap each layer forward with its current index; idempotent via __wrapped__
+        for layer_idx, layer in enumerate(model.model.layers):
+            forward = getattr(layer.forward, "__wrapped__", layer.forward)
+            layer.forward = ShortTransformer._layer_io(model, layer_idx)(forward)
 
     @staticmethod
     def _layer_io(model, layer_idx: int):
@@ -79,7 +85,7 @@ class ShortTransformer(PreTrainedModel):
                 for k, v in model.memory.layers_outputs.items():
                     dist = model.distance(v, output_hidden_states)
 
-                    cut_layers = layer_idx - k - 1
+                    cut_layers = layer_idx - k
 
                     model.memory.result[cut_layers, k + 1] = (
                         model.memory.result[cut_layers, k + 1]
@@ -159,23 +165,26 @@ class ShortTransformer(PreTrainedModel):
 
     @staticmethod
     def prune(model, start_layer: int, block_size: int):
+        assert (
+            0 <= start_layer and start_layer + block_size <= model.layer_count
+        ), f"Block {start_layer}-{start_layer + block_size - 1} is out of range for {model.layer_count} layers."
+
+        removed_layers = range(start_layer, start_layer + block_size)
+        logger.debug(f"Removing layers: {list(removed_layers)}")
+
         new_layers = torch.nn.ModuleList()
-
-        remove_layers = list(range(start_layer, start_layer + block_size))
-        logger.debug(f"Removing layers: {remove_layers}")
-
-        count = 0
-        for i in range(0, model.layer_count):
-            if i not in remove_layers:
-                count += 1
-                layer = model.model.layers[i]
-                layer.layer_idx = count
-                layer.self_attn.layer_idx = count
-                new_layers.append(layer)
+        for i, layer in enumerate(model.model.layers):
+            if i in removed_layers:
+                continue
+            layer.self_attn.layer_idx = len(new_layers)
+            new_layers.append(layer)
 
         model.model.layers = new_layers
+        model.layer_count = len(new_layers)
+        model.clear_memory()
+        ShortTransformer._wrap_layers(model)
 
-        changed_num_hidden_layers = model.layer_count - block_size
+        changed_num_hidden_layers = model.layer_count
         changed_model_name_or_path = (
             f"{model.config._name_or_path}-{changed_num_hidden_layers}L"
         )
@@ -211,5 +220,5 @@ class ShortTransformer(PreTrainedModel):
         )
         logger.debug(f"Choosing optimal {block_size}-layers block to prune.")
         start_layer = get_best_pruning_start(result=result, block_size=block_size)
-        logger.debug(f"Best 5-layers block to prune starts at layer: {start_layer}.")
+        logger.debug(f"Best {block_size}-layers block to prune starts at layer: {start_layer}.")
         return model.prune(start_layer=start_layer, block_size=block_size)

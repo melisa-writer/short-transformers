@@ -3,22 +3,24 @@
 import numpy as np
 
 
+# result[n, l]: averaged distance for removing the n-layers block starting at layer l,
+# valid for l in 0..layer_count-n (see ShortTransformer.Memory)
 def get_best_pruning_start(result, block_size: int) -> int:
-    layer_count = result.shape[0]
+    layer_count = result.shape[1]
     assert (
-        block_size < layer_count and block_size > 0
+        0 < block_size < layer_count
     ), f"Expected `block_size` value between 1 and {layer_count -1}, got {block_size}."
-    layer_result = result[block_size, : layer_count - block_size]
-    start_layer = np.argmin(layer_result)
+    layer_result = result[block_size, : layer_count - block_size + 1]
+    start_layer = int(np.argmin(layer_result))
     return start_layer
 
 
 def get_scored_blocks(result, return_md=True, threshold=float("inf")) -> dict:
-    layer_count = result.shape[0]
+    layer_count = result.shape[1]
     stats = {}
     for i in range(1, layer_count):
-        layer_result = result[i, : layer_count - i]
-        start_layer = np.argmin(layer_result)
+        layer_result = result[i, : layer_count - i + 1]
+        start_layer = int(np.argmin(layer_result))
         score = layer_result[start_layer]
         if score <= threshold:
             stats[i] = {"start_layer": start_layer, "score": score}

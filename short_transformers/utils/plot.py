@@ -6,6 +6,10 @@ import matplotlib
 def draw_diagram(results, output_file_path, title=None, normalized=True):
     plt.clf()
 
+    # row 0 is the empty block, drop it so row i is the i-layers block
+    results = results[1:]
+    block_sizes = np.arange(1, results.shape[0] + 1)
+
     mask = np.zeros_like(results)
     mask[np.triu_indices_from(mask, k=1)] = True
     mask = np.flip(mask, axis=0)
@@ -20,7 +24,9 @@ def draw_diagram(results, output_file_path, title=None, normalized=True):
 
         results = (results - min_dist) / (max_dist - min_dist)
 
-    ax = sns.heatmap(results, linewidth=0.5, mask=mask, cmap="viridis_r")
+    ax = sns.heatmap(
+        results, linewidth=0.5, mask=mask, cmap="viridis_r", yticklabels=block_sizes
+    )
     ax.invert_yaxis()
     ax.set_xticklabels(ax.get_xticklabels(), ha="left")
     ax.set_yticklabels(ax.get_yticklabels(), va="bottom")
@@ -38,9 +44,9 @@ def draw_layers_heatmap(results, metric_name, title, output_path, block_size=0, 
 
     # @TODO make row-wise normalization?
     if block_size:
-        data = results[0, :-block_size]
+        data = results[1, :-block_size]
     else:
-        data = results[0, :]
+        data = results[1, :]
     data = np.asarray(data).reshape(data.shape[0],1)
 
     fig = plt.figure(figsize = (5,5))
