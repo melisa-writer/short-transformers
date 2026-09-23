@@ -214,6 +214,17 @@ def test_remove_layers_loads_tokenizer_from_config():
     assert short.layer_count == LAYERS - 2
 
 
+def test_batch_size_above_one_is_rejected():
+    model = ShortTransformer.from_model(FakeCausalLM())
+    for call in (model.analyse_layers, lambda **kw: model.remove_layers(block_size=1, **kw)):
+        try:
+            call(dataset=[{"text": "abcdef"}], tokenizer=Tok(), key="text", batch_size=2)
+        except AssertionError as e:
+            assert "batch_size" in str(e)
+        else:
+            raise AssertionError("batch_size=2 was accepted")
+
+
 def test_relative_magnitude_is_paper_ratio():
     x = torch.randn(1, 5, HIDDEN)
     identity = relative_magnitude(x, x)
@@ -224,6 +235,7 @@ def test_relative_magnitude_is_paper_ratio():
 
 
 if __name__ == "__main__":
+    test_batch_size_above_one_is_rejected()
     test_chat_template_path_matches_plain_path()
     test_chat_template_with_real_tokenizer()
     test_remove_layers_loads_tokenizer_from_config()
