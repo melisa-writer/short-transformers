@@ -66,7 +66,7 @@ class ShortTransformer(PreTrainedModel):
                 nonlocal model
                 nonlocal layer_idx
 
-                input_hidden_states = args[0]
+                input_hidden_states = args[0] if args else kw["hidden_states"]
 
                 if layer_idx == 0:
                     # clear the memory of previous example outputs and remmeber the input
@@ -78,8 +78,9 @@ class ShortTransformer(PreTrainedModel):
                 # pass all arguments to the function
                 result = f(*args, **kw)
 
-                # calculate io metric for all layers:
-                output_hidden_states = torch.clone(result[0]).to("cpu")
+                # decoder layers return a tuple in transformers < 4.54, a bare tensor since
+                output_hidden_states = result[0] if isinstance(result, tuple) else result
+                output_hidden_states = output_hidden_states.to("cpu")
 
                 # calculate scores from -1 to this layer:
                 for k, v in model.memory.layers_outputs.items():
@@ -94,9 +95,7 @@ class ShortTransformer(PreTrainedModel):
                     ) / (model.memory.examples_count + 1)
 
                 # remember the state
-                model.memory.layers_outputs[layer_idx] = torch.clone(
-                    output_hidden_states
-                ).to("cpu")
+                model.memory.layers_outputs[layer_idx] = output_hidden_states
                 return result
 
             return wrap
