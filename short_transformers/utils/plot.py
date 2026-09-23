@@ -1,10 +1,10 @@
-import matplotlib.pylab as plt
+import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-import matplotlib
+
 
 def draw_diagram(results, output_file_path, title=None, normalized=True):
-    plt.clf()
+    fig = plt.figure()
 
     # row 0 is the empty block, drop it so row i is the i-layers block
     results = results[1:]
@@ -37,10 +37,11 @@ def draw_diagram(results, output_file_path, title=None, normalized=True):
     if title:
         ax.set_title(title)
 
-    plt.savefig(output_file_path)
+    fig.savefig(output_file_path)
+    plt.close(fig)
 
 
-def draw_layers_heatmap(results, metric_name, title, output_path, block_size=0, cmap=matplotlib.cm.viridis_r):
+def draw_layers_heatmap(results, metric_name, title, output_path, block_size=0, cmap="viridis_r"):
 
     # @TODO make row-wise normalization?
     if block_size:
@@ -54,4 +55,5 @@ def draw_layers_heatmap(results, metric_name, title, output_path, block_size=0, 
 
     ax.set_xlabel(metric_name)
     ax.set_title(title)
-    plt.savefig(output_path)
+    fig.savefig(output_path)
+    plt.close(fig)

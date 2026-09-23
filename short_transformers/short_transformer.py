@@ -8,7 +8,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 from short_transformers.dist import angular_distance_last_token
 from short_transformers.utils import get_best_pruning_start, get_logger
 
-logger = get_logger("short-transformers", debug=True)
+# raise the level from the application: logging.getLogger("short-transformers").setLevel(logging.DEBUG)
+logger = get_logger("short-transformers")
 
 
 class Memory:
