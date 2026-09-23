@@ -59,6 +59,10 @@ class Tok:
         ids = torch.tensor([[ord(c) % 10 for c in text]])
         return SimpleNamespace(to=lambda dev: {"input_ids": ids})
 
+    def apply_chat_template(self, messages, **kw):
+        assert kw.get("return_dict") and kw.get("return_tensors") == "pt", kw
+        return self("".join(m["content"] for m in messages))
+
 
 def hidden_states(model, ids):
     """x[l] = input to layer l, x[L] = output of the last layer."""
@@ -168,6 +172,48 @@ def test_prune_twice_and_reanalyse():
     assert np.all(np.isfinite(result)) and result[1, 0] > 0
 
 
+def test_chat_template_path_matches_plain_path():
+    torch.manual_seed(0)
+    model = ShortTransformer.from_model(FakeCausalLM())
+    plain = model.analyse_layers(dataset=[{"text": "abcdef"}], tokenizer=Tok(), key="text")
+    chat = model.analyse_layers(
+        dataset=[{"messages": [{"role": "user", "content": "abc"}, {"role": "assistant", "content": "def"}]}],
+        tokenizer=Tok(), use_chat_template=True, key="messages",
+    )
+    assert np.allclose(plain, chat)
+
+
+def test_chat_template_with_real_tokenizer():
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    vocab = {w: i for i, w in enumerate(["[UNK]", "<s>", "</s>", "hi", "there", "user", "assistant"])}
+    raw = Tokenizer(models.WordLevel(vocab, unk_token="[UNK]"))
+    raw.pre_tokenizer = pre_tokenizers.Whitespace()
+    tok = PreTrainedTokenizerFast(tokenizer_object=raw, unk_token="[UNK]", bos_token="<s>", eos_token="</s>")
+    tok.chat_template = "{% for m in messages %}{{ m['role'] }} {{ m['content'] }} {% endfor %}"
+
+    torch.manual_seed(0)
+    model = ShortTransformer.from_model(FakeCausalLM())
+    result = model.analyse_layers(
+        dataset=[{"messages": [{"role": "user", "content": "hi there"}]}],
+        tokenizer=tok, use_chat_template=True, key="messages", max_length=3,
+    )
+    assert result.shape == (LAYERS + 1, LAYERS) and result[1, 0] > 0
+
+
+def test_remove_layers_loads_tokenizer_from_config():
+    from unittest.mock import patch
+
+    torch.manual_seed(0)
+    model = ShortTransformer.from_model(FakeCausalLM())
+    with patch("short_transformers.short_transformer.AutoTokenizer") as auto:
+        auto.from_pretrained.return_value = Tok()
+        short = model.remove_layers(block_size=2, dataset=[{"text": "abcdef"}], key="text")
+    auto.from_pretrained.assert_called_once_with("fake")
+    assert short.layer_count == LAYERS - 2
+
+
 def test_relative_magnitude_is_paper_ratio():
     x = torch.randn(1, 5, HIDDEN)
     identity = relative_magnitude(x, x)
@@ -178,6 +224,9 @@ def test_relative_magnitude_is_paper_ratio():
 
 
 if __name__ == "__main__":
+    test_chat_template_path_matches_plain_path()
+    test_chat_template_with_real_tokenizer()
+    test_remove_layers_loads_tokenizer_from_config()
     test_relative_magnitude_is_paper_ratio()
     test_result_rows_are_block_sizes()
     test_layers_returning_bare_tensor()
