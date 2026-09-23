@@ -22,17 +22,23 @@ class Layer(nn.Module):
         return (hidden_states + self.rot(hidden_states),)
 
 
+class TensorLayer(Layer):
+    # transformers >= 4.54 decoder layers return the tensor, not a tuple
+    def forward(self, hidden_states, **kw):
+        return super().forward(hidden_states)[0]
+
+
 class Inner(nn.Module):
-    def __init__(self):
+    def __init__(self, layer_cls=Layer):
         super().__init__()
         self.embed = nn.Embedding(10, HIDDEN)
-        self.layers = nn.ModuleList(Layer(i) for i in range(LAYERS))
+        self.layers = nn.ModuleList(layer_cls(i) for i in range(LAYERS))
 
 
 class FakeCausalLM(nn.Module):
-    def __init__(self):
+    def __init__(self, layer_cls=Layer):
         super().__init__()
-        self.model = Inner()
+        self.model = Inner(layer_cls)
         self.config = SimpleNamespace(_name_or_path="fake", num_hidden_layers=LAYERS)
 
     @property
@@ -42,7 +48,8 @@ class FakeCausalLM(nn.Module):
     def forward(self, input_ids, **kw):
         h = self.model.embed(input_ids)
         for layer in self.model.layers:
-            h = layer(h)[0]
+            h = layer(h)
+            h = h[0] if isinstance(h, tuple) else h
         return h
 
 
@@ -57,14 +64,15 @@ def hidden_states(model, ids):
     h = model.model.embed(ids)
     xs = [h]
     for layer in model.model.layers:
-        h = layer(h)[0]
+        h = layer(h)
+        h = h[0] if isinstance(h, tuple) else h
         xs.append(h)
     return xs
 
 
-def test_result_rows_are_block_sizes():
+def test_result_rows_are_block_sizes(layer_cls=Layer):
     torch.manual_seed(0)
-    model = ShortTransformer.from_model(FakeCausalLM())
+    model = ShortTransformer.from_model(FakeCausalLM(layer_cls))
     text = "abcdef"
     ds = [{"text": text}]
     with torch.no_grad():
@@ -79,6 +87,47 @@ def test_result_rows_are_block_sizes():
             assert abs(result[n, l] - expected) < 1e-6, (n, l)
         # cells past the last valid start layer are never written
         assert np.all(result[n, LAYERS - n + 1 :] == 0)
+
+
+def test_layers_returning_bare_tensor():
+    test_result_rows_are_block_sizes(TensorLayer)
+
+
+def test_real_llama_roundtrip(tmp_path=None):
+    import tempfile
+
+    from transformers import AutoModelForCausalLM, LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(0)
+    cfg = LlamaConfig(
+        vocab_size=32, hidden_size=16, intermediate_size=32, num_hidden_layers=4,
+        num_attention_heads=2, num_key_value_heads=2, max_position_embeddings=32,
+    )
+    model = ShortTransformer.from_model(LlamaForCausalLM(cfg))
+    ids = torch.arange(6)[None]
+    with torch.no_grad():
+        ref = model(input_ids=ids, output_hidden_states=True).hidden_states
+
+    class IdsTok:
+        def __call__(self, text, **kw):
+            return SimpleNamespace(to=lambda dev: {"input_ids": ids})
+
+    result = model.analyse_layers(dataset=[{"text": "x"}], tokenizer=IdsTok(), key="text", limit=1)
+    assert result.shape == (5, 4)
+    # hidden_states[l] is the input to layer l; the last entry is post-norm, so stop before it
+    for n in range(1, 4):
+        for l in range(0, 4 - n):
+            expected = model.distance(ref[l], ref[l + n])
+            assert abs(result[n, l] - expected) < 1e-5, (n, l)
+
+    model.prune(start_layer=1, block_size=2)
+    with torch.no_grad():
+        model(input_ids=ids)
+    out_dir = tmp_path or tempfile.mkdtemp()
+    model.save_pretrained(out_dir)
+    reloaded = AutoModelForCausalLM.from_pretrained(out_dir)
+    assert reloaded.config.num_hidden_layers == 2
+    assert len(reloaded.model.layers) == 2
 
 
 def test_best_start_matches_block_size():
@@ -120,6 +169,8 @@ def test_prune_twice_and_reanalyse():
 
 if __name__ == "__main__":
     test_result_rows_are_block_sizes()
+    test_layers_returning_bare_tensor()
+    test_real_llama_roundtrip()
     test_best_start_matches_block_size()
     test_prune_twice_and_reanalyse()
     print("ok")
