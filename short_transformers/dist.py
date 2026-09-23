@@ -97,6 +97,7 @@ def bi_score(input, output) -> float:
 
 # Weight subcloning: direct initialization of transformers using larger pretrained ones
 # https://arxiv.org/abs/2312.09299
+# ||f(x)|| / ||x + f(x)|| where x is the block input and x + f(x) its output
 def relative_magnitude(input, output, eps=1e-6) -> float:
-    score = torch.norm(output, dim=-1)/(torch.norm(output + input, dim=-1) + eps)
+    score = torch.norm(output - input, dim=-1) / (torch.norm(output, dim=-1) + eps)
     return score.mean().item()

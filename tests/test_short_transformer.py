@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from short_transformers import ShortTransformer
+from short_transformers.dist import relative_magnitude
 from short_transformers.utils import get_best_pruning_start, get_scored_blocks
 
 HIDDEN, LAYERS = 4, 6
@@ -167,7 +168,17 @@ def test_prune_twice_and_reanalyse():
     assert np.all(np.isfinite(result)) and result[1, 0] > 0
 
 
+def test_relative_magnitude_is_paper_ratio():
+    x = torch.randn(1, 5, HIDDEN)
+    identity = relative_magnitude(x, x)
+    shrink = relative_magnitude(x, x - x / 2)  # f(x) = -x/2 -> ||f|| / ||x+f|| = 1
+    assert abs(identity) < 1e-5
+    assert abs(shrink - 1.0) < 1e-4
+    assert identity < shrink
+
+
 if __name__ == "__main__":
+    test_relative_magnitude_is_paper_ratio()
     test_result_rows_are_block_sizes()
     test_layers_returning_bare_tensor()
     test_real_llama_roundtrip()
