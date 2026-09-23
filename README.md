@@ -30,7 +30,8 @@ from short_transformers import ShortTransformer
 from datasets import load_dataset
 
 # load from path/hf_hub
-model = ShortTransformer.from_pretrained(model_name)
+model_name = "meta-llama/Meta-Llama-3-8B"
+model = ShortTransformer.from_pretrained(model_name, device_map="auto")
 
 # or use hf model
 # model = ShortTransformer.from_model(hf_model)
@@ -39,13 +40,14 @@ model = ShortTransformer.from_pretrained(model_name)
 dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
 
 # remove 5 layers, use the dataset to find the least important layers to remove
-short_model = model.remove_layers(block_size=5, dataset=dataset, limit=1000)
+# the tokenizer is loaded from the model config; pass tokenizer=... to override
+short_model = model.remove_layers(block_size=5, dataset=dataset, key="text", limit=1000)
 
 # continue training to heal after the cut
 # ...
 
 # save as hf model
-short_model.save_pretrained(output_path)
+short_model.save_pretrained("short_model")
 ```
 
 Both `short_model` and the saved model are fully compatible with transformers. See `examples/basic.py` for a complete working example.

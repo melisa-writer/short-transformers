@@ -128,10 +128,9 @@ class ShortTransformer(PreTrainedModel):
             try:
                 tokenizer = AutoTokenizer.from_pretrained(model.config._name_or_path)
             except Exception as e:
-                logger.error(
-                    f"Loading the tokenizer failed wwth error: {e}.\nUse analyse_layers(... tokenizer=...) to manually set the tokenizer."
-                )
-                raise RuntimeError
+                raise RuntimeError(
+                    f"Loading the tokenizer failed with error: {e}.\nUse analyse_layers(... tokenizer=...) to manually set the tokenizer."
+                ) from e
 
         logger.debug(f"Running inference on {limit} samples.")
 
@@ -145,7 +144,15 @@ class ShortTransformer(PreTrainedModel):
             for d in tqdm(dataset):
                 content = d[key]
                 if use_chat_template:
-                    inputs = tokenizer.apply_chat_template(content, tokenize=True, add_generation_prompt=False)
+                    inputs = tokenizer.apply_chat_template(
+                        content,
+                        tokenize=True,
+                        add_generation_prompt=False,
+                        return_tensors="pt",
+                        return_dict=True,
+                        truncation=True,
+                        max_length=max_length,
+                    ).to(model.device)
                 else:
                     inputs = tokenizer(
                         content,
@@ -200,19 +207,20 @@ class ShortTransformer(PreTrainedModel):
     @staticmethod
     def remove_layers(
         model,
-        tokenizer,
         block_size,
         dataset,
+        tokenizer=None,
+        use_chat_template=False,
         key="text",
         limit=1,
         batch_size=1,
         max_length=1000,
-        return_outputs=False,
     ):
         assert batch_size == 1, "batch_size > 1 is not supported yet."
         result = model.analyse_layers(
             dataset=dataset,
             tokenizer=tokenizer,
+            use_chat_template=use_chat_template,
             key=key,
             limit=limit,
             max_length=max_length,
