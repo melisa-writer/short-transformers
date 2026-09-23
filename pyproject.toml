@@ -12,6 +12,12 @@ matplotlib = "^3.8.4"
 tqdm = "^4.66.4"
 seaborn = "^0.13.2"
 
+# torch and transformers are left to the user at runtime (see README);
+# the dev group pins what the tests need
+[tool.poetry.group.dev.dependencies]
+torch = "*"
+transformers = "*"
+pytest = "*"
 
 [build-system]
 requires = ["poetry-core"]
