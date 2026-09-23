@@ -7,7 +7,12 @@ import torch
 from torch import nn
 
 from short_transformers import ShortTransformer
-from short_transformers.dist import relative_magnitude
+from short_transformers.dist import (
+    get_angular_distance_ith_token,
+    get_euclidian_dist_ith_token,
+    get_linear_approximation_ith_token,
+    relative_magnitude,
+)
 from short_transformers.utils import get_best_pruning_start, get_scored_blocks
 
 HIDDEN, LAYERS = 4, 6
@@ -225,6 +230,55 @@ def test_batch_size_above_one_is_rejected():
             raise AssertionError("batch_size=2 was accepted")
 
 
+def test_import_leaves_root_logger_alone():
+    import logging
+    import subprocess
+    import sys
+
+    code = (
+        "import logging; logging.getLogger().addHandler(logging.NullHandler());"
+        "import short_transformers; print(len(logging.getLogger().handlers))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "1"
+    assert logging.getLogger("short-transformers").level == logging.WARN
+
+
+def test_ith_token_metrics_on_bf16_and_short_sequences():
+    x = torch.randn(1, 3, HIDDEN, dtype=torch.bfloat16)
+    y = torch.randn(1, 3, HIDDEN, dtype=torch.bfloat16)
+    for factory in (get_angular_distance_ith_token, get_linear_approximation_ith_token, get_euclidian_dist_ith_token):
+        assert isinstance(factory(-1)(x, y), float)
+        try:
+            factory(5)(x, y)
+        except RuntimeError as e:
+            assert "6 tokens" in str(e) and isinstance(e.__cause__, IndexError)
+        else:
+            raise AssertionError("no error on too short sequence")
+    # log of the mean squared residual, not of the sum
+    xf, yf = x.float(), y.float()
+    a = (xf[0, -1] @ yf[0, -1]) / (xf[0, -1] @ xf[0, -1])
+    expected = float(torch.log(((a * xf[0, -1] - yf[0, -1]) ** 2).mean()))
+    assert abs(get_linear_approximation_ith_token(-1)(x, y) - expected) < 1e-4
+
+
+def test_plots_close_their_figures():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import tempfile
+
+    from short_transformers.utils import draw_diagram, draw_layers_heatmap
+
+    r = np.zeros((LAYERS + 1, LAYERS))
+    for n in range(1, LAYERS + 1):
+        r[n, : LAYERS - n + 1] = np.random.rand(LAYERS - n + 1) + n
+    d = tempfile.mkdtemp()
+    draw_diagram(r, f"{d}/d.png", title="t")
+    draw_layers_heatmap(r, "m", "t", f"{d}/h.png")
+    assert plt.get_fignums() == []
+
+
 def test_relative_magnitude_is_paper_ratio():
     x = torch.randn(1, 5, HIDDEN)
     identity = relative_magnitude(x, x)
@@ -235,6 +289,9 @@ def test_relative_magnitude_is_paper_ratio():
 
 
 if __name__ == "__main__":
+    test_import_leaves_root_logger_alone()
+    test_ith_token_metrics_on_bf16_and_short_sequences()
+    test_plots_close_their_figures()
     test_batch_size_above_one_is_rejected()
     test_chat_template_path_matches_plain_path()
     test_chat_template_with_real_tokenizer()

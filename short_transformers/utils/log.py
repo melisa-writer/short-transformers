@@ -3,12 +3,10 @@ import sys
 
 
 def get_logger(logger_name="root", debug=False):
-    logging.root.handlers = []
     logger = logging.getLogger(logger_name)
-    if debug:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.WARN)
+    logger.setLevel(logging.DEBUG if debug else logging.WARN)
+    # own handler, no propagation: the host application's root logger is left alone
+    logger.propagate = False
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
         logging.Formatter(
@@ -16,6 +14,5 @@ def get_logger(logger_name="root", debug=False):
             "%Y-%m-%d %H:%M:%S",
         )
     )
-    logger.handlers = []
-    logger.addHandler(handler)
+    logger.handlers = [handler]
     return logger
