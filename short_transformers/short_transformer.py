@@ -107,10 +107,6 @@ class ShortTransformer(PreTrainedModel):
         model.distance = criterion_callable
 
     @staticmethod
-    def group_batch(batch):
-        return {k: [v] for k, v in batch.items()}
-
-    @staticmethod
     def analyse_layers(
         model,
         dataset,
@@ -120,7 +116,9 @@ class ShortTransformer(PreTrainedModel):
         limit: int = 1,
         max_length: int = 1000,
         batch_size: int = 1
-    ) -> None:
+    ) -> np.ndarray:
+        # ponytail: metrics take one sequence at a time; batching needs pad-aware metrics
+        assert batch_size == 1, "batch_size > 1 is not supported yet."
         if tokenizer is None:
             logger.debug(
                 "Tokenizer not provided, will load tokenizer from config._name_or_path"
@@ -135,9 +133,6 @@ class ShortTransformer(PreTrainedModel):
         logger.debug(f"Running inference on {limit} samples.")
 
         model.model.eval()
-
-        if batch_size > 1:
-            dataset = dataset.map(ShortTransformer.group_batch, batched=True, batch_size=batch_size)
 
         with torch.no_grad():
             count = 0
@@ -157,12 +152,11 @@ class ShortTransformer(PreTrainedModel):
                     inputs = tokenizer(
                         content,
                         return_tensors="pt",
-                        padding=True if batch_size>1 else False,
                         truncation=True,
                         max_length=max_length,
                     ).to(model.device)
                 model(**inputs)
-                count += batch_size
+                count += 1
                 if count >= limit:
                     break
         result = model.memory.result
@@ -216,7 +210,6 @@ class ShortTransformer(PreTrainedModel):
         batch_size=1,
         max_length=1000,
     ):
-        assert batch_size == 1, "batch_size > 1 is not supported yet."
         result = model.analyse_layers(
             dataset=dataset,
             tokenizer=tokenizer,
@@ -224,6 +217,7 @@ class ShortTransformer(PreTrainedModel):
             key=key,
             limit=limit,
             max_length=max_length,
+            batch_size=batch_size,
         )
         logger.debug(f"Choosing optimal {block_size}-layers block to prune.")
         start_layer = get_best_pruning_start(result=result, block_size=block_size)
