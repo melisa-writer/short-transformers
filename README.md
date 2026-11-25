@@ -159,6 +159,46 @@ results = model.analyse_layers(
 )
 ```
 
+## Multimodal and looped models:
+
+`from_pretrained` falls back to `AutoModelForImageTextToText` for multimodal checkpoints, and the decoder
+layers are found under `model.layers` or the usual `language_model` wrappers.
+
+Looped models run some layers several times per forward pass. [Inkling 2](https://huggingface.co/thinkingmachines/Inkling-2-Mini)
+runs its 24 layers as 0-5, then 6-17 three times (each pass restarting from the output of layer 5), then 18-23:
+48 layer applications. For these models `analyse_layers` scores **layer applications** instead of layers:
+`results[n, p]` is the distance between the input of position `p` and the output of position `p + n - 1`,
+and `model.layer_labels` names the positions (`6p2` is layer 6 on the second pass).
+
+```python
+import torch
+from datasets import load_dataset
+from short_transformers import ShortTransformer
+from short_transformers.utils import draw_diagram, get_scored_blocks
+
+model = ShortTransformer.from_pretrained("thinkingmachines/Inkling-2-Mini", dtype=torch.bfloat16, device_map="cuda")
+model.layer_labels  # ['0', ..., '5', '6p1', ..., '17p1', '6p2', ..., '17p3', '18', ..., '23']
+
+dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
+results = model.analyse_layers(dataset=dataset, key="text", limit=100, max_length=512)
+
+draw_diagram(results, "inkling.png", title="Inkling-2-Mini", labels=model.layer_labels)
+print(get_scored_blocks(results, labels=model.layer_labels))
+```
+
+<p align="center">
+<img src="./docs/images/Inkling-2-Mini.png" align="center" width='600'/>
+</p>
+
+When reading the results:
+- A block that spans a pass restart (e.g. `10p2`-`7p3`) compares states that are not on one computation path:
+  its input is mid-pass, its output descends from the pre-loop state. Prefer blocks within one pass, or the
+  non-looped layers.
+- Inkling 2 adds the residual stream into block summaries every 6 layers (layers 0, 6, 12, 18 start a new block),
+  so a layer's hidden states at those boundaries hold only the new block: expect larger distances there.
+- `prune` and `remove_layers` raise `NotImplementedError` for looped models: removing one application of a shared
+  layer is not a change to the weights.
+
 ## Supported metric for layer importance calculation:
 - bi score (see: [ShortGPT: Layers in Large Language Models are More Redundant Than You Expect](https://arxiv.org/pdf/2403.03853))
 - relative magnitude (see: [Weight subcloning: direct initialization of transformers using larger pretrained ones](https://arxiv.org/abs/2312.09299))

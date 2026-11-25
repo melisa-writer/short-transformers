@@ -15,7 +15,8 @@ def get_best_pruning_start(result, block_size: int) -> int:
     return start_layer
 
 
-def get_scored_blocks(result, return_md=True, threshold=float("inf")) -> dict:
+def get_scored_blocks(result, return_md=True, threshold=float("inf"), labels=None) -> dict:
+    """labels: names for the positions in the markdown table, e.g. model.layer_labels for looped models."""
     layer_count = result.shape[1]
     stats = {}
     for i in range(1, layer_count):
@@ -31,6 +32,9 @@ def get_scored_blocks(result, return_md=True, threshold=float("inf")) -> dict:
     stats_md = "| Block_size | Removed_layers | Score (avg dist)|\n"
     stats_md += "| -------- | ------- | -------- |\n"
     for k, v in stats.items():
-        stats_md += f"| {k} | {v['start_layer']}-{v['start_layer']+k-1} | {round(v['score'], 3)}|\n"
+        first, last = v["start_layer"], v["start_layer"] + k - 1
+        if labels is not None:
+            first, last = labels[first], labels[last]
+        stats_md += f"| {k} | {first}-{last} | {round(v['score'], 3)}|\n"
 
     return stats_md

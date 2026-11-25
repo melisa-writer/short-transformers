@@ -11,24 +11,78 @@ from short_transformers.utils import get_best_pruning_start, get_logger
 # raise the level from the application: logging.getLogger("short-transformers").setLevel(logging.DEBUG)
 logger = get_logger("short-transformers")
 
+# where the decoder layers live: causal LMs, then multimodal models wrapping a language model
+LAYER_PATHS = (
+    "model.layers",
+    "model.language_model.layers",
+    "model.language_model.model.layers",
+    "language_model.model.layers",
+    "language_model.layers",
+)
+
+
+def _layers_owner(model):
+    """Return the module whose `layers` attribute is the decoder ModuleList."""
+    for path in LAYER_PATHS:
+        owner = model
+        for attr in path.split(".")[:-1]:
+            owner = getattr(owner, attr, None)
+            if owner is None:
+                break
+        if isinstance(getattr(owner, "layers", None), torch.nn.ModuleList):
+            return owner
+    raise ValueError(f"Could not find the decoder layers, tried: {', '.join(LAYER_PATHS)}.")
+
+
+def _text_config(config):
+    return config.get_text_config() if hasattr(config, "get_text_config") else config
+
+
+def _layer_schedule(model, layer_count: int) -> list:
+    """The order the layers run in one forward pass, as (layer index, pass) pairs.
+
+    One entry per layer for ordinary models. Looped models (e.g. Inkling 2: layers
+    loop_layer_index_start..loop_layer_index_end-1 run loop_num_passes times) get one entry
+    per layer application, so each pass through a looped layer is its own position.
+    """
+    cfg = _text_config(model.config)
+    start = getattr(cfg, "loop_layer_index_start", None)
+    end = getattr(cfg, "loop_layer_index_end", None)
+    passes = getattr(cfg, "loop_num_passes", 1) or 1
+    if start is None or end is None or passes <= 1 or not 0 <= start < end <= layer_count:
+        return [(i, 0) for i in range(layer_count)]
+    return (
+        [(i, 0) for i in range(start)]
+        + [(i, p) for p in range(passes) for i in range(start, end)]
+        + [(i, 0) for i in range(end, layer_count)]
+    )
+
+
+def _schedule_labels(schedule: list) -> list:
+    looped = {i for i, p in schedule if p > 0}
+    return [f"{i}p{p + 1}" if i in looped else str(i) for i, p in schedule]
+
 
 class Memory:
-    def __init__(self, layer_count: int):
+    def __init__(self, position_count: int):
         self.examples_count: int = -1
-        # result[n, l]: averaged distance for removing the n-layers block starting at layer l
-        self.result = np.zeros((layer_count + 1, layer_count))
-        self.layers_outputs: dict = {}
+        # result[n, l]: averaged distance for removing the n-layers block starting at position l
+        # (positions are layers, or layer applications for looped models: see _layer_schedule)
+        self.result = np.zeros((position_count + 1, position_count))
+        # inputs[p]: the hidden states that entered position p in the current example
+        self.inputs: list = []
 
 
 class ShortTransformer(PreTrainedModel):
     @classmethod
     def from_model(cls, model, distance=angular_distance_last_token):
         cls = model
-        cls.layer_count = len(cls.model.layers)
+        cls.layer_count = len(_layers_owner(cls).layers)
         cls.distance = distance
+        ShortTransformer._set_schedule(cls)
 
         # add memory for storing intermediate layers outputs
-        cls.memory = Memory(cls.layer_count)
+        cls.memory = Memory(len(cls.layer_schedule))
 
         # @TODO add distances here
         # @TODO auto assign all methods from the class here
@@ -44,19 +98,32 @@ class ShortTransformer(PreTrainedModel):
 
     @classmethod
     def from_pretrained(cls, *args, **kw):
-        # @TODO: support other AutoModels variants
-        model = AutoModelForCausalLM.from_pretrained(*args, **kw)
+        try:
+            model = AutoModelForCausalLM.from_pretrained(*args, **kw)
+        except ValueError as e:
+            # multimodal models (e.g. Inkling 2) only register an image-text-to-text class
+            from transformers import AutoModelForImageTextToText
+
+            logger.debug(f"AutoModelForCausalLM failed ({e}), trying AutoModelForImageTextToText.")
+            model = AutoModelForImageTextToText.from_pretrained(*args, **kw)
         return cls.from_model(model)
 
     @staticmethod
+    def _set_schedule(model) -> None:
+        model.layer_schedule = _layer_schedule(model, model.layer_count)
+        model.layer_labels = _schedule_labels(model.layer_schedule)
+        model.is_looped = len(model.layer_schedule) != model.layer_count
+
+    @staticmethod
     def clear_memory(model) -> None:
-        model.memory = Memory(model.layer_count)
+        model.memory = Memory(len(model.layer_schedule))
 
     @staticmethod
     def _wrap_layers(model) -> None:
-        # (re)wrap each layer forward with its current index; idempotent via __wrapped__
-        for layer_idx, layer in enumerate(model.model.layers):
-            forward = getattr(layer.forward, "__wrapped__", layer.forward)
+        # (re)wrap each layer forward with its current index; idempotent via _short_original
+        # (not __wrapped__: transformers' own forward decorators set it to the unbound function)
+        for layer_idx, layer in enumerate(_layers_owner(model).layers):
+            forward = getattr(layer.forward, "_short_original", layer.forward)
             layer.forward = ShortTransformer._layer_io(model, layer_idx)(forward)
 
     @staticmethod
@@ -68,37 +135,45 @@ class ShortTransformer(PreTrainedModel):
                 nonlocal layer_idx
 
                 input_hidden_states = args[0] if args else kw["hidden_states"]
+                memory = model.memory
 
                 if layer_idx == 0:
-                    # clear the memory of previous example outputs and remmeber the input
-                    model.memory.layers_outputs = {
-                        -1: torch.clone(input_hidden_states).to("cpu")
-                    }
-                    model.memory.examples_count += 1
+                    # a new forward pass: forget the previous example's states
+                    memory.inputs = []
+                    memory.examples_count += 1
+
+                # position of this call in the forward pass; differs from layer_idx for looped models
+                position = len(memory.inputs)
+                expected = model.layer_schedule[position][0] if position < len(model.layer_schedule) else None
+                if expected != layer_idx:
+                    raise RuntimeError(
+                        f"Layer {layer_idx} ran at position {position}, expected layer {expected}: the model "
+                        "runs its layers in an order short-transformers does not know about."
+                    )
+
+                # remember what entered this position: a block's input is not always the previous
+                # output (looped models restart each pass from the pre-loop state)
+                memory.inputs.append(input_hidden_states.detach().to("cpu", copy=True))
 
                 # pass all arguments to the function
                 result = f(*args, **kw)
 
                 # decoder layers return a tuple in transformers < 4.54, a bare tensor since
                 output_hidden_states = result[0] if isinstance(result, tuple) else result
-                output_hidden_states = output_hidden_states.to("cpu")
+                output_hidden_states = output_hidden_states.detach().to("cpu")
 
-                # calculate scores from -1 to this layer:
-                for k, v in model.memory.layers_outputs.items():
-                    dist = model.distance(v, output_hidden_states)
+                # score every block that ends here: positions start..position
+                for start, block_input in enumerate(memory.inputs):
+                    dist = model.distance(block_input, output_hidden_states)
+                    block_size = position - start + 1
 
-                    cut_layers = layer_idx - k
+                    memory.result[block_size, start] = (
+                        memory.result[block_size, start] * memory.examples_count + dist
+                    ) / (memory.examples_count + 1)
 
-                    model.memory.result[cut_layers, k + 1] = (
-                        model.memory.result[cut_layers, k + 1]
-                        * model.memory.examples_count
-                        + dist
-                    ) / (model.memory.examples_count + 1)
-
-                # remember the state
-                model.memory.layers_outputs[layer_idx] = output_hidden_states
                 return result
 
+            wrap._short_original = f
             return wrap
 
         return decorator
@@ -133,7 +208,7 @@ class ShortTransformer(PreTrainedModel):
 
         logger.debug(f"Running inference on {limit} samples.")
 
-        model.model.eval()
+        model.eval()
 
         with torch.no_grad():
             count = 0
@@ -165,7 +240,16 @@ class ShortTransformer(PreTrainedModel):
         return result
 
     @staticmethod
+    def _check_prunable(model) -> None:
+        if model.is_looped:
+            raise NotImplementedError(
+                "Pruning looped models is not supported: their layers run several times per forward pass "
+                "and analyse_layers() scores layer applications (see model.layer_labels), not layers."
+            )
+
+    @staticmethod
     def prune(model, start_layer: int, block_size: int):
+        ShortTransformer._check_prunable(model)
         assert (
             0 <= start_layer and start_layer + block_size <= model.layer_count
         ), f"Block {start_layer}-{start_layer + block_size - 1} is out of range for {model.layer_count} layers."
@@ -173,15 +257,17 @@ class ShortTransformer(PreTrainedModel):
         removed_layers = range(start_layer, start_layer + block_size)
         logger.debug(f"Removing layers: {list(removed_layers)}")
 
+        owner = _layers_owner(model)
         new_layers = torch.nn.ModuleList()
-        for i, layer in enumerate(model.model.layers):
+        for i, layer in enumerate(owner.layers):
             if i in removed_layers:
                 continue
             layer.self_attn.layer_idx = len(new_layers)
             new_layers.append(layer)
 
-        model.model.layers = new_layers
+        owner.layers = new_layers
         model.layer_count = len(new_layers)
+        ShortTransformer._set_schedule(model)
         model.clear_memory()
         ShortTransformer._wrap_layers(model)
 
@@ -191,10 +277,10 @@ class ShortTransformer(PreTrainedModel):
         )
 
         logger.debug(f"""Changing model config to reflect changes:
-        config.num_hidden_layers: {model.config.num_hidden_layers} -> {changed_num_hidden_layers}
+        config.num_hidden_layers: {_text_config(model.config).num_hidden_layers} -> {changed_num_hidden_layers}
         config._name_or_path: {model.config._name_or_path} -> {changed_model_name_or_path}""")
 
-        model.config.num_hidden_layers = changed_num_hidden_layers
+        _text_config(model.config).num_hidden_layers = changed_num_hidden_layers
         model.config._name_or_path = changed_model_name_or_path
 
         return model
@@ -211,6 +297,7 @@ class ShortTransformer(PreTrainedModel):
         batch_size=1,
         max_length=1000,
     ):
+        ShortTransformer._check_prunable(model)  # before the (long) analysis
         result = model.analyse_layers(
             dataset=dataset,
             tokenizer=tokenizer,

@@ -3,8 +3,9 @@ import numpy as np
 import seaborn as sns
 
 
-def draw_diagram(results, output_file_path, title=None, normalized=True):
-    fig = plt.figure()
+def draw_diagram(results, output_file_path, title=None, normalized=True, labels=None):
+    """labels: x-axis tick labels, e.g. model.layer_labels for looped models (one per layer application)."""
+    fig = plt.figure(figsize=(max(6.4, 0.2 * results.shape[1]), max(4.8, 0.15 * results.shape[1])))
 
     # row 0 is the empty block, drop it so row i is the i-layers block
     results = results[1:]
@@ -25,10 +26,14 @@ def draw_diagram(results, output_file_path, title=None, normalized=True):
         results = (results - min_dist) / (max_dist - min_dist)
 
     ax = sns.heatmap(
-        results, linewidth=0.5, mask=mask, cmap="viridis_r", yticklabels=block_sizes
+        results, linewidth=0.5, mask=mask, cmap="viridis_r", yticklabels=block_sizes,
+        xticklabels=labels if labels is not None else "auto",
     )
     ax.invert_yaxis()
-    ax.set_xticklabels(ax.get_xticklabels(), ha="left")
+    if labels is not None:
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha="center")
+    else:
+        ax.set_xticklabels(ax.get_xticklabels(), ha="left")
     ax.set_yticklabels(ax.get_yticklabels(), va="bottom")
 
     plt.xlabel("Layer number, l")
