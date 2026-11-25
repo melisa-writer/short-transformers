@@ -288,6 +288,205 @@ def test_relative_magnitude_is_paper_ratio():
     assert identity < shrink
 
 
+# Looped models (Inkling 2): layers LOOP_START..LOOP_END-1 run PASSES times; every pass restarts
+# from the pre-loop state, so a block's input is not always the previous layer's output.
+LOOP_START, LOOP_END, PASSES = 2, 4, 3
+SCHEDULE = [0, 1] + [2, 3] * PASSES + [4, 5]
+LABELS = ["0", "1", "2p1", "3p1", "2p2", "3p2", "2p3", "3p3", "4", "5"]
+
+
+class LoopedInner(nn.Module):
+    def __init__(self, passes=PASSES):
+        super().__init__()
+        self.passes = passes
+        self.embed = nn.Embedding(10, HIDDEN)
+        # multimodal layout: the decoder sits under model.language_model
+        self.language_model = nn.Module()
+        self.language_model.layers = nn.ModuleList(TensorLayer(i) for i in range(LAYERS))
+        self.message = nn.Linear(HIDDEN, HIDDEN, bias=False)
+
+    def forward(self, ids, trace=None):
+        layers = self.language_model.layers
+
+        def run(layer, h):
+            out = layer(h)
+            if trace is not None:
+                trace.append((h, out))
+            return out
+
+        h = self.embed(ids)
+        for layer in layers[:LOOP_START]:
+            h = run(layer, h)
+        pre_loop = h
+        for p in range(self.passes):
+            # restart from the pre-loop state, mixed with a message from the previous pass
+            h = pre_loop if p == 0 else pre_loop + self.message(h)
+            for layer in layers[LOOP_START:LOOP_END]:
+                h = run(layer, h)
+        for layer in layers[LOOP_END:]:
+            h = run(layer, h)
+        return h
+
+
+class FakeLoopedLM(nn.Module):
+    def __init__(self, passes=PASSES):
+        super().__init__()
+        self.model = LoopedInner(passes)
+        text_config = SimpleNamespace(
+            num_hidden_layers=LAYERS, loop_layer_index_start=LOOP_START,
+            loop_layer_index_end=LOOP_END, loop_num_passes=PASSES,
+        )
+        self.config = SimpleNamespace(_name_or_path="fake-looped", get_text_config=lambda: text_config)
+
+    @property
+    def device(self):
+        return torch.device("cpu")
+
+    def forward(self, input_ids, **kw):
+        return self.model(input_ids)
+
+
+def check_looped_result(model, result, trace):
+    """result[n, s] = distance(input of position s, output of position s + n - 1)."""
+    positions = len(SCHEDULE)
+    assert len(trace) == positions
+    assert result.shape == (positions + 1, positions)
+    assert np.all(result[0] == 0)
+    for n in range(1, positions + 1):
+        for s in range(positions - n + 1):
+            expected = model.distance(trace[s][0], trace[s + n - 1][1])
+            assert abs(result[n, s] - expected) < 1e-5, (n, s)
+        assert np.all(result[n, positions - n + 1 :] == 0)
+
+
+def test_looped_model_scores_layer_applications():
+    torch.manual_seed(0)
+    model = ShortTransformer.from_model(FakeLoopedLM())
+    assert model.layer_count == LAYERS and model.is_looped
+    assert [i for i, _ in model.layer_schedule] == SCHEDULE
+    assert model.layer_labels == LABELS
+
+    text = "abcdef"
+    trace = []
+    with torch.no_grad():
+        model.model(Tok()(text).to("cpu")["input_ids"], trace=trace)
+    # the reference run went through the wrapped layers too: start the analysis from clean memory
+    model.clear_memory()
+    result = model.analyse_layers(dataset=[{"text": text}] * 2, tokenizer=Tok(), key="text", limit=2)
+    check_looped_result(model, result, trace)
+
+
+def test_looped_model_refuses_to_prune():
+    model = ShortTransformer.from_model(FakeLoopedLM())
+    for call in (lambda: model.prune(start_layer=2, block_size=1),
+                 lambda: model.remove_layers(block_size=1, dataset=[{"text": "abcdef"}], tokenizer=Tok())):
+        try:
+            call()
+        except NotImplementedError as e:
+            assert "looped" in str(e)
+        else:
+            raise AssertionError("pruning a looped model was accepted")
+    assert len(model.model.language_model.layers) == LAYERS
+
+
+def test_unexpected_layer_order_is_an_error():
+    # the config promises 3 passes, the model runs 4: fail loudly instead of mis-indexing
+    model = ShortTransformer.from_model(FakeLoopedLM(passes=PASSES + 1))
+    try:
+        model.analyse_layers(dataset=[{"text": "abcdef"}], tokenizer=Tok(), key="text")
+    except RuntimeError as e:
+        assert "position" in str(e)
+    else:
+        raise AssertionError("a layer order that does not match the schedule was accepted")
+
+
+def test_from_pretrained_falls_back_to_image_text_to_text():
+    from unittest.mock import patch
+
+    looped = FakeLoopedLM()
+    with patch("short_transformers.short_transformer.AutoModelForCausalLM") as causal, \
+            patch("transformers.AutoModelForImageTextToText") as multimodal:
+        causal.from_pretrained.side_effect = ValueError("Unrecognized configuration class")
+        multimodal.from_pretrained.return_value = looped
+        model = ShortTransformer.from_pretrained("some/vlm")
+    multimodal.from_pretrained.assert_called_once_with("some/vlm")
+    assert model is looped and model.is_looped
+
+
+def test_real_inkling2_loop():
+    try:
+        from transformers import Inkling2LoopConfig, Inkling2LoopForConditionalGeneration
+    except ImportError:
+        print("skipped: transformers has no Inkling2Loop")
+        return
+
+    torch.manual_seed(0)
+    cfg = Inkling2LoopConfig(
+        text_config=dict(
+            vocab_size=64, unpadded_vocab_size=64, hidden_size=32, num_hidden_layers=LAYERS,
+            num_attention_heads=2, num_key_value_heads=1, head_dim=16, swa_num_attention_heads=2,
+            swa_num_key_value_heads=1, swa_head_dim=16, sliding_window_size=8, d_rel=4, rel_extent=16,
+            moe_intermediate_size=16, n_routed_experts=4, num_experts_per_tok=2,
+            n_layers_per_attn_res_block=2, loop_layer_index_start=LOOP_START,
+            loop_layer_index_end=LOOP_END, loop_num_passes=PASSES, loop_gate_rank=8, eos_token_id=1,
+        ),
+        vision_config=dict(
+            hidden_size=16, num_hidden_layers=1, num_attention_heads=2, text_hidden_size=32,
+            projection_hidden_dim=16, posemb_grid_size=4,
+        ),
+        image_token_id=63,
+    )
+    model = Inkling2LoopForConditionalGeneration(cfg).eval()
+    ids = torch.arange(3, 13)[None]
+
+    # reference inputs/outputs per layer application, from plain torch hooks on an unwrapped model
+    trace, pending = [], []
+    hooks = []
+    for layer in model.model.language_model.layers:
+        hooks.append(layer.register_forward_pre_hook(lambda m, a: pending.append(a[0].detach().clone())))
+        hooks.append(layer.register_forward_hook(lambda m, a, out: trace.append((pending.pop(), out.detach()))))
+    with torch.no_grad():
+        model(input_ids=ids)
+    for h in hooks:
+        h.remove()
+
+    model = ShortTransformer.from_model(model)
+    assert model.layer_labels == LABELS
+
+    class IdsTok:
+        def __call__(self, text, **kw):
+            return SimpleNamespace(to=lambda dev: {"input_ids": ids})
+
+    result = model.analyse_layers(dataset=[{"text": "x"}], tokenizer=IdsTok(), key="text", limit=1)
+    check_looped_result(model, result, trace)
+    # passes 2 and 3 restart from the pre-loop state, not from the previous pass's output
+    assert not torch.allclose(trace[4][0], trace[3][1])
+    assert torch.allclose(trace[4][0], trace[1][1])
+
+
+def test_diagram_with_layer_labels():
+    import matplotlib
+    matplotlib.use("Agg")
+    import tempfile
+
+    from short_transformers.utils import draw_diagram
+
+    positions = len(SCHEDULE)
+    r = np.zeros((positions + 1, positions))
+    for n in range(1, positions + 1):
+        r[n, : positions - n + 1] = np.random.rand(positions - n + 1) + n
+    draw_diagram(r, f"{tempfile.mkdtemp()}/d.png", title="looped", labels=LABELS)
+
+
+def test_scored_blocks_with_layer_labels():
+    positions = len(SCHEDULE)
+    r = np.ones((positions + 1, positions))
+    r[2, 4] = 0.1  # positions 4-5: layers 2 and 3 on the second pass
+    md = get_scored_blocks(r, labels=LABELS)
+    assert "| 2 | 2p2-3p2 | 0.1|" in md
+    assert "| 2 | 4-5 | 0.1|" in get_scored_blocks(r)
+
+
 if __name__ == "__main__":
     test_import_leaves_root_logger_alone()
     test_ith_token_metrics_on_bf16_and_short_sequences()
@@ -302,4 +501,11 @@ if __name__ == "__main__":
     test_real_llama_roundtrip()
     test_best_start_matches_block_size()
     test_prune_twice_and_reanalyse()
+    test_looped_model_scores_layer_applications()
+    test_looped_model_refuses_to_prune()
+    test_unexpected_layer_order_is_an_error()
+    test_from_pretrained_falls_back_to_image_text_to_text()
+    test_real_inkling2_loop()
+    test_diagram_with_layer_labels()
+    test_scored_blocks_with_layer_labels()
     print("ok")
